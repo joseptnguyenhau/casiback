@@ -42,82 +42,158 @@ class CashbackRepository(private val appDao: AppDao) {
     }
 
     /**
-     * Link Converter Engine & Firestore Real-time Sync
-     * Khi người dùng dán link Shopee, hệ thống tạo link affiliate và tự động tạo document mới
-     * lưu vào Collection 'transactions' trên Firestore theo thời gian thực.
+     * Hàm thuật toán sử dụng Regex để tự động bóc tách mã sản phẩm (Item ID) từ các định dạng link Shopee phổ biến.
      */
-    suspend fun convertAndSaveLink(originalUrl: String): Result<Pair<String, Double>> {
+    fun extractShopeeItemId(url: String): String? {
         try {
-            if (originalUrl.isBlank() || (!originalUrl.contains("shopee.vn") && !originalUrl.contains("shp.ee"))) {
+            // Định dạng 1: /product/shopId/itemId
+            val pattern1 = Regex("/product/\\d+/(\\d+)")
+            val match1 = pattern1.find(url)
+            if (match1 != null && match1.groups.size > 1) {
+                return match1.groups[1]?.value
+            }
+
+            // Định dạng 2: i.shopId.itemId
+            val pattern2 = Regex("i\\.\\d+\\.(\\d+)")
+            val match2 = pattern2.find(url)
+            if (match2 != null && match2.groups.size > 1) {
+                return match2.groups[1]?.value
+            }
+
+            // Định dạng 3: itemid=xxxx hoặc /xxxx (link rút gọn)
+            val pattern3 = Regex("itemid[=/_](\\d+)", RegexOption.IGNORE_CASE)
+            val match3 = pattern3.find(url)
+            if (match3 != null && match3.groups.size > 1) {
+                return match3.groups[1]?.value
+            }
+        } catch (e: Exception) {
+            // Bắt lỗi ngoại lệ
+        }
+        return null
+    }
+
+    /**
+     * Lưu giao dịch hoàn tiền lên Firestore và cập nhật số dư chờ đối soát (balance_pending).
+     */
+    suspend fun saveTransactionToFirestore(userId: String, shopeeLink: String): Result<Pair<String, Double>> {
+        try {
+            if (shopeeLink.isBlank() || (!shopeeLink.contains("shopee.vn") && !shopeeLink.contains("shp.ee") && !shopeeLink.contains("shope.ee"))) {
                 return Result.failure(IllegalArgumentException("Link Shopee không hợp lệ. Vui lòng kiểm tra lại URL!"))
             }
 
-            kotlinx.coroutines.delay(600)
+            kotlinx.coroutines.delay(500)
 
-            val randomCashback = (Random.nextInt(2, 12) * 5000.0).coerceAtLeast(10000.0)
-            val randomId = Random.nextInt(100000, 999999)
-            val shortAffiliateUrl = "https://s.shopee.vn/casi_aff_$randomId?sub_id=$currentUserId"
-            val orderId = "CS${System.currentTimeMillis().toString().takeLast(8)}"
-            
-            val sampleProductNames = listOf(
-                "Áo khoác gió thông minh Casi Techwear",
-                "Tai nghe Neo-Cyber Bluetooth TWS 5.3",
-                "Đế tản nhiệt LED RGB laptop gaming",
-                "Bàn phím cơ không dây Cyberpunk 68 keys",
-                "Cáp sạc nhanh Type-C LED 120W",
-                "Bình giữ nhiệt thông minh hiển thị nhiệt độ"
-            )
-            val productName = sampleProductNames.random()
+            // Bóc tách Item ID từ link Shopee bằng Regex
+            val itemId = extractShopeeItemId(shopeeLink) ?: System.currentTimeMillis().toString().takeLast(6)
+            val orderId = "CASI_" + System.currentTimeMillis()
+            val productName = "Sản phẩm Shopee ID: $itemId"
+            val affiliateLink = "https://shope.ee/$userId"
+            val cashbackAmount = 25000.0
+            val status = "pending"
+            val timestamp = com.google.firebase.Timestamp.now()
             val createdAtMillis = System.currentTimeMillis()
 
-            // 1. Lưu vào Firestore Collection 'transactions'
+            // 1. Lưu tài liệu mới vào collection 'transactions' trên Firestore với đúng cấu trúc yêu cầu
             val transactionData = hashMapOf(
-                "userId" to currentUserId,
                 "orderId" to orderId,
+                "userId" to userId,
                 "productName" to productName,
-                "originalLink" to originalUrl,
-                "affiliateLink" to shortAffiliateUrl,
-                "cashbackAmount" to randomCashback,
-                "status" to "pending",
-                "createdAt" to createdAtMillis
+                "originalLink" to shopeeLink,
+                "affiliateLink" to affiliateLink,
+                "cashbackAmount" to cashbackAmount,
+                "status" to status,
+                "timestamp" to timestamp
             )
             firestore.collection("transactions").document(orderId).set(transactionData).await()
 
-            // 2. Cập nhật số dư chờ đối soát (balancePending) trên Firestore 'users'
-            val userDocRef = firestore.collection("users").document(currentUserId)
+            // 2. Cập nhật tăng số tiền trong trường balance_pending (và balancePending) của tài liệu user trong collection 'users'
+            val userDocRef = firestore.collection("users").document(userId)
             firestore.runTransaction { transaction ->
                 val snapshot = transaction.get(userDocRef)
-                val currentPending = snapshot.getDouble("balancePending") ?: 320000.0
-                transaction.update(userDocRef, "balancePending", currentPending + randomCashback)
+                val currentPending = snapshot.getDouble("balance_pending") 
+                    ?: snapshot.getDouble("balancePending") 
+                    ?: 320000.0
+                val newPending = currentPending + cashbackAmount
+                
+                transaction.update(
+                    userDocRef, 
+                    mapOf(
+                        "balance_pending" to newPending,
+                        "balancePending" to newPending
+                    )
+                )
             }.await()
 
             // 3. Đồng thời lưu cache cục bộ vào Room Database
             val newTx = TransactionEntity(
-                userId = currentUserId,
+                userId = userId,
                 orderId = orderId,
                 productName = productName,
-                originalLink = originalUrl,
-                affiliateLink = shortAffiliateUrl,
-                cashbackAmount = randomCashback,
-                status = "pending",
+                originalLink = shopeeLink,
+                affiliateLink = affiliateLink,
+                cashbackAmount = cashbackAmount,
+                status = status,
                 createdAt = createdAtMillis
             )
             appDao.insertTransaction(newTx)
 
-            val user = appDao.getUser(currentUserId)
-            if (user != null) {
-                appDao.updateUser(user.copy(balancePending = user.balancePending + randomCashback))
+            val localUser = appDao.getUser(userId)
+            if (localUser != null) {
+                appDao.updateUser(localUser.copy(balancePending = localUser.balancePending + cashbackAmount))
             }
 
-            return Result.success(Pair(shortAffiliateUrl, randomCashback))
+            return Result.success(Pair(affiliateLink, cashbackAmount))
         } catch (e: Exception) {
             return Result.failure(e)
         }
     }
 
-    // Giữ nguyên tương thích với ViewModel cũ gọi convertLinkToAffiliate
-    suspend fun convertLinkToAffiliate(originalUrl: String): Result<Pair<String, Double>> {
-        return convertAndSaveLink(originalUrl)
+    /**
+     * Link Converter Engine & Firestore Real-time Sync
+     * Khi người dùng dán link Shopee, hệ thống gọi saveTransactionToFirestore.
+     */
+    suspend fun convertAndSaveLink(originalUrl: String): Result<Pair<String, Double>> {
+        return saveTransactionToFirestore(currentUserId, originalUrl)
+    }
+
+    /**
+     * Lắng nghe thời gian thực danh sách giao dịch từ Firestore collection 'transactions' lọc theo userId.
+     */
+    fun getTransactionsRealtimeFlow(): Flow<List<TransactionEntity>> = callbackFlow {
+        val query = firestore.collection("transactions")
+            .whereEqualTo("userId", currentUserId)
+        
+        val listener = query.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                return@addSnapshotListener
+            }
+            if (snapshot != null) {
+                val list = snapshot.documents.mapNotNull { doc ->
+                    val orderId = doc.getString("orderId") ?: doc.id
+                    val userId = doc.getString("userId") ?: currentUserId
+                    val productName = doc.getString("productName") ?: "Sản phẩm Shopee"
+                    val originalLink = doc.getString("originalLink") ?: ""
+                    val affiliateLink = doc.getString("affiliateLink") ?: ""
+                    val cashbackAmount = doc.getDouble("cashbackAmount") ?: 25000.0
+                    val status = doc.getString("status") ?: "pending"
+                    val timestamp = doc.getTimestamp("timestamp")
+                    val createdAt = timestamp?.toDate()?.time ?: doc.getLong("createdAt") ?: System.currentTimeMillis()
+
+                    TransactionEntity(
+                        userId = userId,
+                        orderId = orderId,
+                        productName = productName,
+                        originalLink = originalLink,
+                        affiliateLink = affiliateLink,
+                        cashbackAmount = cashbackAmount,
+                        status = status,
+                        createdAt = createdAt
+                    )
+                }.sortedByDescending { it.createdAt }
+                trySend(list)
+            }
+        }
+        awaitClose { listener.remove() }
     }
 
     /**
@@ -182,5 +258,49 @@ class CashbackRepository(private val appDao: AppDao) {
         }
 
         return Result.success("Yêu cầu rút tiền đã được gửi lên hệ thống bảo mật Casi AI!")
+    }
+
+    /**
+     * Đăng ký tài khoản người dùng mới và lưu trực tiếp lên Firestore (collection 'users').
+     */
+    suspend fun registerUser(
+        name: String,
+        email: String,
+        phone: String
+    ): Result<String> {
+        try {
+            if (name.isBlank() || email.isBlank() || phone.isBlank()) {
+                return Result.failure(IllegalArgumentException("Vui lòng điền đầy đủ thông tin đăng ký!"))
+            }
+
+            val newUserId = "user_${System.currentTimeMillis().toString().takeLast(6)}"
+            val userData = hashMapOf(
+                "userId" to newUserId,
+                "name" to name,
+                "email" to email,
+                "phone" to phone,
+                "balanceAvailable" to 50000.0, // Thưởng chào mừng 50k cho user mới
+                "balancePending" to 0.0,
+                "createdAt" to System.currentTimeMillis()
+            )
+
+            // Lưu lên Firestore collection 'users'
+            firestore.collection("users").document(newUserId).set(userData).await()
+
+            // Lưu cache cục bộ vào Room Database
+            val newUserEntity = UserEntity(
+                userId = newUserId,
+                name = name,
+                email = email,
+                phone = phone,
+                balanceAvailable = 50000.0,
+                balancePending = 0.0
+            )
+            appDao.insertUser(newUserEntity)
+
+            return Result.success("Đăng ký tài khoản thành công! Tặng thưởng 50.000đ chào mừng vào ví.")
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
     }
 }

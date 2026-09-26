@@ -30,7 +30,7 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
             initialValue = null
         )
 
-    val transactionsState: StateFlow<List<TransactionEntity>> = repository.getTransactionsFlow()
+    val transactionsState: StateFlow<List<TransactionEntity>> = repository.getTransactionsRealtimeFlow()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -71,15 +71,16 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _isConverting.value = true
             _uiMessage.value = null
-            val result = repository.convertLinkToAffiliate(link)
+            // Gọi hàm repository lưu giao dịch và cập nhật Firestore
+            val result = repository.saveTransactionToFirestore(repository.currentUserId, link)
             _isConverting.value = false
             result.fold(
                 onSuccess = { pair ->
                     _conversionResult.value = pair
-                    _uiMessage.value = "Tạo link hoàn tiền thành công! Đã ghi nhận đơn hàng tạm tính."
+                    _uiMessage.value = "Kích hoạt hoàn tiền thành công!"
                 },
                 onFailure = { error ->
-                    _uiMessage.value = error.message ?: "Có lỗi xảy ra khi tạo link."
+                    _uiMessage.value = error.message ?: "Có lỗi xảy ra khi kích hoạt hoàn tiền."
                 }
             )
         }
@@ -106,6 +107,26 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
                 },
                 onFailure = { err ->
                     _uiMessage.value = err.message ?: "Lỗi yêu cầu rút tiền."
+                }
+            )
+        }
+    }
+
+    fun registerUser(
+        name: String,
+        email: String,
+        phone: String,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = repository.registerUser(name, email, phone)
+            result.fold(
+                onSuccess = { msg ->
+                    _uiMessage.value = msg
+                    onSuccess()
+                },
+                onFailure = { err ->
+                    _uiMessage.value = err.message ?: "Đăng ký thất bại."
                 }
             )
         }

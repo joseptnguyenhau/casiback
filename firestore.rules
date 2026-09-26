@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Collection 'users': Bảo vệ số dư tài khoản người dùng
+    match /users/{userId} {
+      // Cho phép đọc thông tin cá nhân và số dư
+      allow read: if true;
+      
+      // NGHIÊM CẤM hoàn toàn client (App APK) tự ghi hoặc cập nhật trực tiếp 
+      // các trường số dư (balanceAvailable, balancePending, balance_pending).
+      // Điều này ngăn chặn tuyệt đối tình trạng hacker tự sửa số tiền trong ví.
+      allow write, update: if false;
+    }
+
+    // 2. Collection 'transactions': Quản lý đơn hàng hoàn tiền
+    match /transactions/{transactionId} {
+      // Cho phép đọc danh sách giao dịch
+      allow read: if true;
+      
+      // Cho phép tạo mới giao dịch (create) khi người dùng dán link và kích hoạt hoàn tiền,
+      // bắt buộc trạng thái ban đầu phải là 'pending' (chờ đối soát).
+      allow create: if request.resource.data.keys().hasAll(['userId', 'orderId', 'cashbackAmount', 'status'])
+                    && request.resource.data.status == 'pending';
+      
+      // NGHIÊM CẤM chỉnh sửa hoặc xóa lịch sử giao dịch sau khi đã tạo để đảm bảo tính toàn vẹn dữ liệu.
+      allow update, delete: if false;
+    }
+
+    // 3. Collection 'withdrawals': Quản lý lệnh rút tiền
+    match /withdrawals/{withdrawalId} {
+      // Cho phép đọc lệnh rút tiền
+      allow read: if true;
+      
+      // Cho phép tạo mới lệnh rút tiền (create) với số tiền hợp lệ và trạng thái 'pending'.
+      allow create: if request.resource.data.keys().hasAll(['userId', 'amount', 'status'])
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.amount >= 20000;
+      
+      // NGHIÊM CẤM sửa hoặc xóa lệnh rút tiền sau khi hệ thống đã ghi nhận.
+      allow update, delete: if false;
+    }
+  }
+}
