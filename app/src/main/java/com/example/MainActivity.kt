@@ -12,6 +12,11 @@ import com.casi.cashback.viewmodel.CashbackViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try {
+            com.google.firebase.FirebaseApp.initializeApp(this)
+        } catch (e: Exception) {
+            // Ignored if already initialized
+        }
         enableEdgeToEdge()
         setContent {
             ShopeeCashbackTheme {

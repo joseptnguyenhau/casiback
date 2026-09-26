@@ -33,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "shopee_cashback_database"
                 )
                     .addCallback(DatabaseCallback())
+                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
