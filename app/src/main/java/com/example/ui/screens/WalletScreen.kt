@@ -1,4 +1,4 @@
-package com.example.ui.screens
+package com.casi.cashback.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -27,9 +27,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.data.entity.WithdrawalEntity
-import com.example.ui.theme.*
-import com.example.viewmodel.CashbackViewModel
+import com.casi.cashback.data.entity.WithdrawalEntity
+import com.casi.cashback.ui.theme.*
+import com.casi.cashback.viewmodel.CashbackViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date

@@ -1,14 +1,14 @@
-package com.example.data
+package com.casi.cashback.data
 
 import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
-import com.example.data.dao.AppDao
-import com.example.data.entity.TransactionEntity
-import com.example.data.entity.UserEntity
-import com.example.data.entity.WithdrawalEntity
+import com.casi.cashback.data.dao.AppDao
+import com.casi.cashback.data.entity.TransactionEntity
+import com.casi.cashback.data.entity.UserEntity
+import com.casi.cashback.data.entity.WithdrawalEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

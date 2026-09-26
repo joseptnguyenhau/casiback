@@ -1,13 +1,13 @@
-package com.example.viewmodel
+package com.casi.cashback.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.AppDatabase
-import com.example.data.entity.TransactionEntity
-import com.example.data.entity.UserEntity
-import com.example.data.entity.WithdrawalEntity
-import com.example.data.repository.CashbackRepository
+import com.casi.cashback.data.AppDatabase
+import com.casi.cashback.data.entity.TransactionEntity
+import com.casi.cashback.data.entity.UserEntity
+import com.casi.cashback.data.entity.WithdrawalEntity
+import com.casi.cashback.data.repository.CashbackRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow

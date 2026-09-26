@@ -1,4 +1,4 @@
-package com.example.ui.screens
+package com.casi.cashback.ui.screens
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -10,10 +10,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.example.ui.theme.CyberSurface
-import com.example.ui.theme.NeonCyan
-import com.example.ui.theme.TextSecondary
-import com.example.viewmodel.CashbackViewModel
+import com.casi.cashback.ui.theme.CyberSurface
+import com.casi.cashback.ui.theme.NeonCyan
+import com.casi.cashback.ui.theme.TextSecondary
+import com.casi.cashback.viewmodel.CashbackViewModel
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     object Home : Screen("home", "Trang Chủ", Icons.Default.Home)

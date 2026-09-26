@@ -1,4 +1,4 @@
-package com.example.ui.screens
+package com.casi.cashback.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,9 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.entity.TransactionEntity
-import com.example.ui.theme.*
-import com.example.viewmodel.CashbackViewModel
+import com.casi.cashback.data.entity.TransactionEntity
+import com.casi.cashback.ui.theme.*
+import com.casi.cashback.viewmodel.CashbackViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date

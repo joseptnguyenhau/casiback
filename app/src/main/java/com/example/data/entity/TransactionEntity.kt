@@ -1,4 +1,4 @@
-package com.example.data.entity
+package com.casi.cashback.data.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey

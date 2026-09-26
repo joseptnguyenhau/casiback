@@ -1,13 +1,13 @@
-package com.example.data.dao
+package com.casi.cashback.data.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
-import com.example.data.entity.TransactionEntity
-import com.example.data.entity.UserEntity
-import com.example.data.entity.WithdrawalEntity
+import com.casi.cashback.data.entity.TransactionEntity
+import com.casi.cashback.data.entity.UserEntity
+import com.casi.cashback.data.entity.WithdrawalEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
