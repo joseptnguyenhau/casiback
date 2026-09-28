@@ -1,1 +1,7 @@
 /build
+/webhook-server/node_modules
+.env
+*.json
+!google-services.json
+!package.json
+!package-lock.json

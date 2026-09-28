@@ -1,12 +1,20 @@
 const express = require('express');
 const admin = require('firebase-admin');
 
-// Khởi tạo Firebase Admin SDK kết nối trực tiếp với dự án 'casiback-5b7e2'
+// Khởi tạo Firebase Admin SDK
+// Sử dụng biến môi trường FIREBASE_SERVICE_ACCOUNT (chuỗi JSON) hoặc GOOGLE_APPLICATION_CREDENTIALS
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+  } catch (e) {
+    console.error('Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', e);
+    admin.initializeApp({
+      projectId: 'casiback-5b7e2'
+    });
+  }
 } else {
   admin.initializeApp({
     projectId: 'casiback-5b7e2'
@@ -31,7 +39,7 @@ app.post('/webhook', async (req, res) => {
     console.log('Received AccessTrade Webhook:', req.body);
 
     if (!order_id || !sub_id) {
-      return res.status(400).json({ error: 'Missing order_id or sub_id (userId)' });
+      return res.status(400).json({ error: 'Missing required fields: order_id or sub_id (userId)' });
     }
 
     const userId = sub_id;
@@ -45,14 +53,14 @@ app.post('/webhook', async (req, res) => {
       const userDoc = await transaction.get(userRef);
       const txDoc = await transaction.get(txRef);
 
-      const currentPending = userDoc.exists 
+      let currentPending = userDoc.exists 
         ? (userDoc.data().balance_pending || userDoc.data().balancePending || 0) 
         : 0;
-      const currentAvailable = userDoc.exists 
+      let currentAvailable = userDoc.exists 
         ? (userDoc.data().balance_available || userDoc.data().balanceAvailable || 0) 
         : 0;
 
-      // Khởi tạo user nếu chưa tồn tại
+      // Khởi tạo user nếu chưa tồn tại trên Firestore
       if (!userDoc.exists) {
         transaction.set(userRef, {
           userId: userId,
@@ -62,12 +70,15 @@ app.post('/webhook', async (req, res) => {
         }, { merge: true });
       }
 
+      const txData = txDoc.exists ? txDoc.data() : null;
+      const oldStatus = txData ? txData.status : null;
+      const oldAmount = txData ? (txData.cashbackAmount || revenue) : revenue;
+
       switch (orderStatus) {
         case 1: {
           // Status 1: Tạm tính (Pending)
-          let newPending = currentPending;
           if (!txDoc.exists) {
-            newPending += revenue;
+            currentPending += revenue;
             transaction.set(txRef, {
               orderId: order_id,
               userId: userId,
@@ -75,87 +86,85 @@ app.post('/webhook', async (req, res) => {
               status: 'pending',
               createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
+          } else {
+            console.log(`Order ${order_id} already exists with status ${oldStatus}. Skipping duplicate pending credit.`);
           }
-          transaction.update(userRef, {
-            balance_pending: newPending,
-            balancePending: newPending
-          });
           break;
         }
         case 2: {
-          // Status 2: Thành công (Approved) -> Chuyển từ pending sang available
-          let newPending = currentPending;
-          let newAvailable = currentAvailable;
-
-          if (txDoc.exists) {
-            const txData = txDoc.data();
-            const oldStatus = txData.status;
-            const oldAmount = txData.cashbackAmount || revenue;
-
-            if (oldStatus === 'pending') {
-              newPending = Math.max(0, currentPending - oldAmount);
-              newAvailable += oldAmount;
-            } else if (oldStatus !== 'approved') {
-              newAvailable += revenue;
-            }
-
-            transaction.update(txRef, {
-              status: 'approved',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          } else {
-            newAvailable += revenue;
+          // Status 2: Thành công (Approved)
+          if (!txDoc.exists) {
+            currentAvailable += revenue;
             transaction.set(txRef, {
               orderId: order_id,
               userId: userId,
               cashbackAmount: revenue,
               status: 'approved',
-              createdAt: admin.firestore.FieldValue.serverTimestamp()
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
+          } else if (oldStatus === 'pending') {
+            currentPending = Math.max(0, currentPending - oldAmount);
+            currentAvailable += oldAmount;
+            transaction.update(txRef, {
+              status: 'approved',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } else if (oldStatus === 'cancelled') {
+            currentAvailable += revenue;
+            transaction.update(txRef, {
+              status: 'approved',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } else {
+            console.log(`Order ${order_id} is already approved. No action needed.`);
           }
-
-          transaction.update(userRef, {
-            balance_pending: newPending,
-            balancePending: newPending,
-            balance_available: newAvailable,
-            balanceAvailable: newAvailable
-          });
           break;
         }
         case 3: {
-          // Status 3: Hủy (Cancelled) -> Trừ khỏi balance_pending
-          let newPending = currentPending;
-
-          if (txDoc.exists) {
-            const txData = txDoc.data();
-            const oldStatus = txData.status;
-            const oldAmount = txData.cashbackAmount || revenue;
-
-            if (oldStatus === 'pending') {
-              newPending = Math.max(0, currentPending - oldAmount);
-            }
-
+          // Status 3: Hủy (Cancelled)
+          if (!txDoc.exists) {
+            transaction.set(txRef, {
+              orderId: order_id,
+              userId: userId,
+              cashbackAmount: revenue,
+              status: 'cancelled',
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } else if (oldStatus === 'pending') {
+            currentPending = Math.max(0, currentPending - oldAmount);
+            transaction.update(txRef, {
+              status: 'cancelled',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } else if (oldStatus === 'approved') {
+            currentAvailable = Math.max(0, currentAvailable - oldAmount);
             transaction.update(txRef, {
               status: 'cancelled',
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
           }
-
-          transaction.update(userRef, {
-            balance_pending: newPending,
-            balancePending: newPending
-          });
           break;
         }
         default:
-          console.log(`Unknown status received: ${orderStatus}`);
+          console.warn(`Unknown AccessTrade status received: ${orderStatus}`);
       }
+
+      // Cập nhật lại số dư user trên Firestore
+      transaction.update(userRef, {
+        balance_pending: currentPending,
+        balancePending: currentPending,
+        balance_available: currentAvailable,
+        balanceAvailable: currentAvailable,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     });
 
     return res.status(200).json({ success: true, message: 'Webhook processed successfully' });
   } catch (error) {
     console.error('Webhook Error:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
