@@ -232,7 +232,7 @@ fun WalletScreen(viewModel: CashbackViewModel) {
 
     if (showWithdrawDialog) {
         CyberWithdrawalDialog(
-            maxBalance = user?.balanceAvailable ?: 185000.0,
+            maxBalance = user?.balanceAvailable ?: 0L,
             onDismiss = { showWithdrawDialog = false },
             onSubmit = { bankName, accNum, accHolder, amount ->
                 viewModel.requestWithdrawal(bankName, accNum, accHolder, amount) {
@@ -246,9 +246,9 @@ fun WalletScreen(viewModel: CashbackViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CyberWithdrawalDialog(
-    maxBalance: Double,
+    maxBalance: Long,
     onDismiss: () -> Unit,
-    onSubmit: (String, String, String, Double) -> Unit
+    onSubmit: (String, String, String, Long) -> Unit
 ) {
     var bankName by remember { mutableStateOf("Techcombank") }
     var accountNumber by remember { mutableStateOf("") }
@@ -397,12 +397,12 @@ fun CyberWithdrawalDialog(
 
                     Button(
                         onClick = {
-                            val amount = amountStr.toDoubleOrNull() ?: 0.0
+                            val amount = amountStr.toLongOrNull() ?: 0L
                             if (bankName.isBlank() || accountNumber.isBlank() || accountHolder.isBlank()) {
                                 errorMessage = "Vui lòng điền đủ thông tin ngân hàng!"
                                 return@Button
                             }
-                            if (amount < 20000.0) {
+                            if (amount < 20000L) {
                                 errorMessage = "Số tiền rút tối thiểu là 20.000đ!"
                                 return@Button
                             }

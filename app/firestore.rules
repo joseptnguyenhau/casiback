@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users collection: users can read their own profile, client cannot modify monetary balance
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false; // Only Cloud Functions / Admin SDK can modify monetary data
+    }
+
+    // Transactions collection: users can read their own transactions, client cannot write
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false; // Only Webhook / Admin SDK can write
+    }
+
+    // Tracking collection: client cannot write directly
+    match /tracking/{trackingId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false; // Only Cloud Function / Admin SDK can write
+    }
+
+    // Withdrawals collection: users can read their own withdrawals, client cannot write directly
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false; // Only Cloud Function / Admin SDK can write
+    }
+  }
+}

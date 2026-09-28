@@ -5,10 +5,10 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "users")
 data class UserEntity(
-    @PrimaryKey val userId: String = "user_001",
-    val name: String = "Nguyễn Văn A",
-    val email: String = "nguyenvana@gmail.com",
-    val phone: String = "0901234567",
-    val balanceAvailable: Double = 185000.0, // Số dư khả dụng (VND)
-    val balancePending: Double = 320000.0   // Số dư chờ đối soát (VND)
+    @PrimaryKey val userId: String,
+    val name: String = "",
+    val email: String = "",
+    val phone: String = "",
+    val balanceAvailable: Long = 0L, // Số dư khả dụng (VND)
+    val balancePending: Long = 0L   // Số dư chờ đối soát (VND)
 )

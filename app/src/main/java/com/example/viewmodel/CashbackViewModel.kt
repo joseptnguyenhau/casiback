@@ -51,8 +51,8 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
     private val _isConverting = MutableStateFlow(false)
     val isConverting: StateFlow<Boolean> = _isConverting.asStateFlow()
 
-    private val _conversionResult = MutableStateFlow<Pair<String, Double>?>(null)
-    val conversionResult: StateFlow<Pair<String, Double>?> = _conversionResult.asStateFlow()
+    private val _conversionResult = MutableStateFlow<Pair<String, Long>?>(null)
+    val conversionResult: StateFlow<Pair<String, Long>?> = _conversionResult.asStateFlow()
 
     private val _uiMessage = MutableStateFlow<String?>(null)
     val uiMessage: StateFlow<String?> = _uiMessage.asStateFlow()
@@ -71,16 +71,16 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _isConverting.value = true
             _uiMessage.value = null
-            // Gọi hàm repository lưu giao dịch và cập nhật Firestore
-            val result = repository.saveTransactionToFirestore(repository.currentUserId, link)
+            // Gọi Cloud Function createAffiliateLink qua Repository (An toàn, không hardcode token trên client)
+            val result = repository.convertAndSaveLink(link)
             _isConverting.value = false
             result.fold(
                 onSuccess = { pair ->
                     _conversionResult.value = pair
-                    _uiMessage.value = "Kích hoạt hoàn tiền thành công!"
+                    _uiMessage.value = "Đã tạo link hoàn tiền thành công!"
                 },
                 onFailure = { error ->
-                    _uiMessage.value = error.message ?: "Có lỗi xảy ra khi kích hoạt hoàn tiền."
+                    _uiMessage.value = error.message ?: "Có lỗi xảy ra khi tạo link hoàn tiền."
                 }
             )
         }
@@ -95,7 +95,7 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
         bankName: String,
         accountNumber: String,
         accountHolder: String,
-        amount: Double,
+        amount: Long,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
@@ -107,26 +107,6 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
                 },
                 onFailure = { err ->
                     _uiMessage.value = err.message ?: "Lỗi yêu cầu rút tiền."
-                }
-            )
-        }
-    }
-
-    fun registerUser(
-        name: String,
-        email: String,
-        phone: String,
-        onSuccess: () -> Unit
-    ) {
-        viewModelScope.launch {
-            val result = repository.registerUser(name, email, phone)
-            result.fold(
-                onSuccess = { msg ->
-                    _uiMessage.value = msg
-                    onSuccess()
-                },
-                onFailure = { err ->
-                    _uiMessage.value = err.message ?: "Đăng ký thất bại."
                 }
             )
         }

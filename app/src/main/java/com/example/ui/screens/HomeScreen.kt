@@ -50,7 +50,7 @@ fun HomeScreen(viewModel: CashbackViewModel, onNavigateToWallet: () -> Unit) {
         }
     }
 
-    val totalAccumulated = (user?.balanceAvailable ?: 0.0) + (user?.balancePending ?: 0.0) + 1250000.0
+    val totalAccumulated = (user?.balanceAvailable ?: 0L) + (user?.balancePending ?: 0L)
 
     Scaffold(
         topBar = {
