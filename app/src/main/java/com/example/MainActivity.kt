@@ -4,10 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.*
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.casi.cashback.ui.screens.LoginScreen
 import com.casi.cashback.ui.screens.MainScreen
 import com.casi.cashback.ui.theme.ShopeeCashbackTheme
 import com.casi.cashback.viewmodel.CashbackViewModel
+import com.google.firebase.auth.FirebaseAuth
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -20,8 +23,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             ShopeeCashbackTheme {
-                val viewModel: CashbackViewModel = viewModel()
-                MainScreen(viewModel = viewModel)
+                var currentUser by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser) }
+
+                if (currentUser == null) {
+                    LoginScreen(
+                        onSignInSuccess = {
+                            currentUser = FirebaseAuth.getInstance().currentUser
+                        },
+                        onSignInError = { _ -> }
+                    )
+                } else {
+                    val viewModel: CashbackViewModel = viewModel()
+                    MainScreen(viewModel = viewModel)
+                }
             }
         }
     }

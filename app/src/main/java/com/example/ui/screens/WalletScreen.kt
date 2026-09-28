@@ -379,7 +379,7 @@ fun CyberWithdrawalDialog(
                 )
 
                 errorMessage?.let {
-                    Text(text = it, color = ErrorRed, style = MaterialTheme.typography.bodySmall)
+                    Text(text = it, color = NeonPink, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 }
 
                 Row(
