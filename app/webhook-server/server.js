@@ -212,6 +212,7 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
         accountNumber: maskedAcc, // Không lưu số tài khoản đầy đủ thô
         accountHolder: accountHolder.toUpperCase(),
         amount: withdrawalAmount,
+        currency: 'VND',
         status: 'pending',
         idempotencyKey: idempotencyKey || null,
         createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -224,6 +225,7 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
         withdrawalId: withdrawalId,
         type: 'withdrawal_reserved',
         amount: withdrawalAmount,
+        currency: 'VND',
         balancePendingBefore: currentPending,
         balancePendingAfter: currentPending,
         balanceAvailableBefore: currentAvailable,
@@ -266,8 +268,8 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
     const revenue = Math.round(Number(pub_revenue));
     const orderStatus = Number(status); // 1: Pending, 2: Approved, 3: Cancelled
 
-    // Idempotency key cho webhook event
-    const webhookEventId = crypto.createHash('sha256').update(`${order_id}_${orderStatus}_${revenue}`).digest('hex');
+    // Idempotency key cho webhook event (bổ sung sub_id để tránh xung đột giữa các user)
+    const webhookEventId = crypto.createHash('sha256').update(`${order_id}_${userId}_${orderStatus}_${revenue}`).digest('hex');
     const webhookEventRef = db.collection('webhook_events').doc(webhookEventId);
 
     const userRef = db.collection('users').doc(userId);
@@ -322,8 +324,7 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
             deltaAvailable = oldAmount;
             eventType = 'pending_to_approved';
           } else if (oldStatus === 'cancelled') {
-            deltaAvailable = revenue;
-            eventType = 'cancelled_to_approved';
+            throw new Error(`Invalid state transition from cancelled to approved`);
           } else if (oldStatus === 'approved') {
             // No-op idempotent
           }
@@ -363,12 +364,14 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      // Cập nhật Transaction record
+      // Cập nhật Transaction record (Lưu riêng pubRevenue và cashbackAmount, kèm currency VND)
       if (!txDoc.exists) {
         transaction.set(txRef, {
           orderId: order_id,
           userId: userId,
+          pubRevenue: revenue,
           cashbackAmount: revenue,
+          currency: 'VND',
           status: newStatus,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -376,7 +379,9 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
       } else {
         transaction.update(txRef, {
           status: newStatus,
+          pubRevenue: revenue,
           cashbackAmount: revenue,
+          currency: 'VND',
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
       }
@@ -391,6 +396,7 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
         oldStatus: oldStatus || 'none',
         newStatus: newStatus,
         amount: revenue,
+        currency: 'VND',
         eventType: eventType,
         source: 'accesstrade_webhook',
         createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -404,6 +410,7 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
         transactionId: order_id,
         type: eventType,
         amount: revenue,
+        currency: 'VND',
         balancePendingBefore: currentPending,
         balancePendingAfter: newPending,
         balanceAvailableBefore: currentAvailable,
