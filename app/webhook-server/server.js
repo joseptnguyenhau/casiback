@@ -44,17 +44,54 @@ async function verifyAuthToken(req, res, next) {
   }
 }
 
-// Middleware: Optional Webhook Secret Verification
+// Middleware: Webhook Secret Verification (Fail-closed in production)
 function verifyWebhookSecret(req, res, next) {
   const webhookSecret = process.env.WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const headerSecret = req.headers['x-webhook-secret'] || req.query.secret;
-    if (headerSecret !== webhookSecret) {
-      console.warn('Unauthorized webhook attempt with invalid/missing secret');
-      return res.status(401).json({ error: 'Unauthorized webhook' });
+  if (!webhookSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('CRITICAL: WEBHOOK_SECRET is missing in production environment. Webhook rejected.');
+      return res.status(401).json({ error: 'Unauthorized: Webhook secret not configured in production' });
     }
+    // Non-production fallback if secret not set
+    return next();
+  }
+
+  const headerSecret = req.headers['x-webhook-secret'] || req.query.secret;
+  if (!headerSecret || headerSecret !== webhookSecret) {
+    console.warn('Unauthorized webhook attempt with invalid or missing secret');
+    return res.status(401).json({ error: 'Unauthorized webhook: Invalid or missing secret' });
   }
   next();
+}
+
+// Business Rule: Isolated Cashback Calculation Function
+function calculateCashback(commission, transactionData = {}) {
+  const comm = Number(commission);
+  if (isNaN(comm) || comm < 0) return 0;
+  // Business rule hiện tại: 1:1 với hoa hồng Publisher (commission)
+  // Có thể mở rộng tỷ lệ/campaign rule tại đây mà không ảnh hưởng state machine
+  return Math.round(comm);
+}
+
+// Status Mapping Adapter: AccessTrade status → Casi internal status
+// AccessTrade: 0 = Pending, 1 = Approved, 2 = Rejected / Cancelled
+function mapAccessTradeStatus(status) {
+  const s = Number(status);
+  if (s === 0) return 'pending';
+  if (s === 1) return 'approved';
+  if (s === 2) return 'cancelled';
+  throw new Error(`Unsupported AccessTrade status code: ${status}`);
+}
+
+// User Resolver: aff_sub1 -> aff_sub2 -> aff_sub3 -> aff_sub4 -> sub_id
+function resolveUserId(body) {
+  const sub1 = body.aff_sub1 || body.affSub1;
+  const sub2 = body.aff_sub2 || body.affSub2;
+  const sub3 = body.aff_sub3 || body.affSub3;
+  const sub4 = body.aff_sub4 || body.affSub4;
+  const subId = body.sub_id || body.subId;
+  const resolved = (sub1 || sub2 || sub3 || sub4 || subId || '').trim();
+  return resolved;
 }
 
 app.get('/', (req, res) => {
@@ -79,7 +116,6 @@ app.post('/api/create-affiliate-link', verifyAuthToken, async (req, res) => {
       return res.status(500).json({ error: 'Hệ thống cấu hình AccessTrade chưa sẵn sàng. Vui lòng thử lại sau.' });
     }
 
-    // Gọi AccessTrade API thực tế
     let response;
     try {
       response = await axios.post(
@@ -99,7 +135,6 @@ app.post('/api/create-affiliate-link', verifyAuthToken, async (req, res) => {
       );
     } catch (atError) {
       console.error('AccessTrade API failure:', atError.message);
-      // TUYỆT ĐỐI KHÔNG trả link giả / success giả khi AccessTrade lỗi
       return res.status(502).json({ error: 'Không thể kết nối tới hệ thống AccessTrade. Vui lòng thử lại sau.' });
     }
 
@@ -167,10 +202,9 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
     const ledgerRef = db.collection('ledger').doc('LEDGER_' + crypto.randomUUID());
 
     const maskedAcc = accountNumber.length > 4 ? '******' + accountNumber.slice(-4) : '******';
-    console.log(`Processing withdrawal request for user ${userId}, amount: ${withdrawalAmount}, bank: ${bankName}, acc: ${maskedAcc}`);
+    console.log(`Processing withdrawal request for user ${userId}, amount: ${withdrawalAmount}, bank: ${bankName}`);
 
     await db.runTransaction(async (transaction) => {
-      // Kiểm tra idempotency nếu có requestId
       if (idempotencyKey) {
         const existingQuery = await transaction.get(
           db.collection('withdrawals').where('userId', '==', userId).where('idempotencyKey', '==', idempotencyKey).limit(1)
@@ -198,7 +232,7 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
         throw new Error('Phát hiện lỗi logic số dư âm.');
       }
 
-      // 1. Cập nhật số dư user (trừ balanceAvailable)
+      // 1. Cập nhật số dư user
       transaction.update(userRef, {
         balanceAvailable: newAvailable,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -209,7 +243,7 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
         withdrawalId: withdrawalId,
         userId: userId,
         bankName: bankName,
-        accountNumber: maskedAcc, // Không lưu số tài khoản đầy đủ thô
+        accountNumber: maskedAcc,
         accountHolder: accountHolder.toUpperCase(),
         amount: withdrawalAmount,
         currency: 'VND',
@@ -218,12 +252,12 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      // 3. Ghi ledger bất biến (withdrawal_reserved)
+      // 3. Ghi ledger bất biến (WITHDRAWAL_RESERVED)
       transaction.set(ledgerRef, {
         ledgerId: ledgerRef.id,
         userId: userId,
         withdrawalId: withdrawalId,
-        type: 'withdrawal_reserved',
+        type: 'WITHDRAWAL_RESERVED',
         amount: withdrawalAmount,
         currency: 'VND',
         balancePendingBefore: currentPending,
@@ -246,108 +280,156 @@ app.post('/api/request-withdrawal', verifyAuthToken, async (req, res) => {
 // ==========================================
 app.post('/webhook', verifyWebhookSecret, async (req, res) => {
   try {
-    const { order_id, sub_id, pub_revenue, status } = req.body;
+    const payload = req.body;
+    console.log('Received AccessTrade Webhook Payload:', JSON.stringify(payload));
 
-    console.log('Received AccessTrade Webhook:', { order_id, sub_id, pub_revenue, status });
+    const rawConversionId = payload.conversion_id || payload.conversionId;
+    if (rawConversionId === undefined || rawConversionId === null || String(rawConversionId).trim() === '') {
+      return res.status(400).json({ error: 'Missing or invalid conversion_id (Primary transaction identity required)' });
+    }
+    const conversionId = String(rawConversionId).trim();
 
-    // Validate bắt buộc
-    if (!order_id || typeof order_id !== 'string' || order_id.trim() === '') {
-      return res.status(400).json({ error: 'Missing or invalid order_id' });
-    }
-    if (!sub_id || typeof sub_id !== 'string' || sub_id.trim() === '') {
-      return res.status(400).json({ error: 'Missing or invalid sub_id (userId)' });
-    }
-    if (pub_revenue === undefined || pub_revenue === null || isNaN(Number(pub_revenue)) || Number(pub_revenue) <= 0) {
-      return res.status(400).json({ error: 'Invalid pub_revenue amount' });
-    }
-    if (status === undefined || status === null || isNaN(Number(status))) {
-      return res.status(400).json({ error: 'Invalid status' });
+    const orderId = String(payload.order_id || payload.orderId || '').trim();
+    const transactionId = String(payload.transaction_id || payload.transactionId || '').trim();
+    const userId = resolveUserId(payload);
+
+    if (!userId) {
+      return res.status(400).json({ error: 'Missing or invalid aff_sub / sub_id (User resolution failed)' });
     }
 
-    const userId = sub_id.trim();
-    const revenue = Math.round(Number(pub_revenue));
-    const orderStatus = Number(status); // 1: Pending, 2: Approved, 3: Cancelled
+    const rawCommission = payload.commission;
+    if (rawCommission === undefined || rawCommission === null || (typeof rawCommission !== 'number' && typeof rawCommission !== 'string')) {
+      return res.status(400).json({ error: 'Missing or invalid commission (payload.commission required exclusively)' });
+    }
+    const commission = Number(rawCommission);
+    if (isNaN(commission) || !isFinite(commission) || commission < 0) {
+      return res.status(400).json({ error: 'Invalid commission value: must be a valid non-negative number' });
+    }
 
-    // Idempotency key cho webhook event (bổ sung sub_id để tránh xung đột giữa các user)
-    const webhookEventId = crypto.createHash('sha256').update(`${order_id}_${userId}_${orderStatus}_${revenue}`).digest('hex');
+    const rawStatus = payload.status;
+    if (rawStatus === undefined || rawStatus === null || isNaN(Number(rawStatus))) {
+      return res.status(400).json({ error: 'Missing or invalid status code' });
+    }
+    const accessTradeStatus = Number(rawStatus);
+    const newStatus = mapAccessTradeStatus(accessTradeStatus);
+
+    const isConfirmed = Number(payload.is_confirmed || payload.isConfirmed || 0) === 1;
+    const salesAmount = Number(payload.sales_amount || payload.salesAmount || 0);
+    const campaignId = String(payload.campaign_id || payload.campaignId || '').trim();
+    const campaignName = String(payload.campaign_name || payload.campaignName || '').trim();
+    const productId = String(payload.product_id || payload.productId || '').trim();
+    const productName = String(payload.product_name || payload.productName || 'Sản phẩm Shopee').trim();
+    const productPrice = Number(payload.product_price || payload.productPrice || 0);
+    const productQuantity = Number(payload.product_quantity || payload.productQuantity || 1);
+    const categoryName = String(payload.category_name || payload.categoryName || '').trim();
+
+    // Idempotency event hash dựa trên conversionId + status + commission + isConfirmed
+    const webhookEventId = crypto.createHash('sha256')
+      .update(`${conversionId}_${userId}_${accessTradeStatus}_${commission}_${Number(isConfirmed)}`)
+      .digest('hex');
+
     const webhookEventRef = db.collection('webhook_events').doc(webhookEventId);
-
     const userRef = db.collection('users').doc(userId);
-    const txRef = db.collection('transactions').doc(order_id);
+    const txRef = db.collection('transactions').doc(conversionId);
 
     await db.runTransaction(async (transaction) => {
-      // Kiểm tra webhook idempotency
+      // 1. Kiểm tra idempotency webhook event
       const webhookDoc = await transaction.get(webhookEventRef);
       if (webhookDoc.exists && webhookDoc.data().processed) {
         console.log(`Duplicate webhook event ${webhookEventId} ignored (Idempotent).`);
         return;
       }
 
+      // 2. Validate user existence (FAIL CLOSED: không auto-create user)
       const userDoc = await transaction.get(userRef);
       if (!userDoc.exists) {
-        // KHÔNG tự động tạo user mới cho webhook từ sub_id lạ
-        throw new Error(`Unknown user sub_id: ${userId}. Webhook rejected for reconciliation.`);
+        throw new Error(`Unknown user id: ${userId}. Webhook rejected for reconciliation.`);
       }
 
+      // 3. Fetch existing transaction theo conversionId
       const txDoc = await transaction.get(txRef);
       const userData = userDoc.data();
-      let currentPending = userData.balancePending || 0;
-      let currentAvailable = userData.balanceAvailable || 0;
+      const currentPending = userData.balancePending || 0;
+      const currentAvailable = userData.balanceAvailable || 0;
 
       const txData = txDoc.exists ? txDoc.data() : null;
-      const oldStatus = txData ? txData.status : null;
-      const oldAmount = txData ? (txData.cashbackAmount || revenue) : revenue;
+      
+      // Kiểm tra data consistency nếu transaction đã tồn tại
+      if (txData) {
+        if (txData.userId && txData.userId !== userId) {
+          throw new Error(`Data conflict: conversion ${conversionId} belongs to user ${txData.userId}, but webhook claims ${userId}`);
+        }
+      }
 
-      let newStatus = 'pending';
+      const oldStatus = txData ? txData.status : 'none';
+      const oldCashback = txData ? (txData.cashbackAmount || 0) : 0;
+      const newCashback = calculateCashback(commission, payload);
+      const cashbackDelta = newCashback - oldCashback;
+
       let deltaPending = 0;
       let deltaAvailable = 0;
-      let eventType = 'cashback_pending';
+      let ledgerType = 'CASHBACK_PENDING';
 
-      switch (orderStatus) {
-        case 1: // Pending
-          newStatus = 'pending';
-          if (!txDoc.exists) {
-            deltaPending = revenue;
-            eventType = 'cashback_pending';
-          } else if (oldStatus === 'approved' || oldStatus === 'cancelled') {
-            throw new Error(`Invalid state transition from ${oldStatus} to pending`);
+      // State Machine & Money Delta calculation
+      switch (oldStatus) {
+        case 'none': // NONE -> New
+          if (newStatus === 'pending') {
+            deltaPending = newCashback;
+            ledgerType = 'CASHBACK_PENDING';
+          } else if (newStatus === 'approved') {
+            deltaAvailable = newCashback;
+            ledgerType = 'CASHBACK_APPROVED';
+          } else if (newStatus === 'cancelled') {
+            // Không đổi balance khi đơn mới tạo đã hủy
+            ledgerType = 'CASHBACK_CANCELLED';
           }
           break;
 
-        case 2: // Approved
-          newStatus = 'approved';
-          if (!txDoc.exists) {
-            deltaAvailable = revenue;
-            eventType = 'cashback_approved';
-          } else if (oldStatus === 'pending') {
-            deltaPending = -oldAmount;
-            deltaAvailable = oldAmount;
-            eventType = 'pending_to_approved';
-          } else if (oldStatus === 'cancelled') {
-            throw new Error(`Invalid state transition from cancelled to approved`);
-          } else if (oldStatus === 'approved') {
-            // No-op idempotent
+        case 'pending':
+          if (newStatus === 'pending') {
+            // Commission update delta
+            deltaPending = cashbackDelta;
+            ledgerType = cashbackDelta >= 0 ? 'CASHBACK_ADJUSTMENT' : 'CASHBACK_ADJUSTMENT';
+          } else if (newStatus === 'approved') {
+            // Pending -> Approved: rút toàn bộ oldCashback khỏi pending, cộng newCashback vào available
+            deltaPending = -oldCashback;
+            deltaAvailable = newCashback;
+            ledgerType = 'CASHBACK_APPROVED';
+          } else if (newStatus === 'cancelled') {
+            // Pending -> Cancelled: rút toàn bộ oldCashback khỏi pending
+            deltaPending = -oldCashback;
+            ledgerType = 'CASHBACK_REVERSAL';
           }
           break;
 
-        case 3: // Cancelled
-          newStatus = 'cancelled';
-          if (!txDoc.exists) {
-            eventType = 'cashback_cancelled';
-            // Không thay đổi balance vì đơn mới tạo đã hủy
-          } else if (oldStatus === 'pending') {
-            deltaPending = -oldAmount;
-            eventType = 'pending_to_cancelled';
-          } else if (oldStatus === 'approved') {
-            deltaAvailable = -oldAmount;
-            eventType = 'approved_to_cancelled';
-          } else if (oldStatus === 'cancelled') {
+        case 'approved':
+          if (newStatus === 'approved') {
+            // Commission update delta trên approved -> điều chỉnh trực tiếp balanceAvailable
+            deltaAvailable = cashbackDelta;
+            ledgerType = 'CASHBACK_ADJUSTMENT';
+          } else if (newStatus === 'cancelled') {
+            // Approved -> Cancelled: đảo ngược available balance
+            deltaAvailable = -oldCashback;
+            ledgerType = 'CASHBACK_REVERSAL';
+          } else if (newStatus === 'pending') {
+            throw new Error('Invalid state transition from approved to pending');
+          }
+          break;
+
+        case 'cancelled':
+          if (newStatus === 'cancelled') {
             // No-op idempotent
+            deltaPending = 0;
+            deltaAvailable = 0;
+            ledgerType = 'CASHBACK_CANCELLED';
+          } else {
+            // Strict terminal state: cancelled -> approved or cancelled -> pending is REJECTED
+            throw new Error(`Invalid state transition from cancelled to ${newStatus}`);
           }
           break;
 
         default:
-          throw new Error(`Unsupported AccessTrade status: ${orderStatus}`);
+          throw new Error(`Unsupported existing transaction status: ${oldStatus}`);
       }
 
       const newPending = currentPending + deltaPending;
@@ -357,83 +439,97 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
         throw new Error('Financial invariant violation: resulting balance cannot be negative.');
       }
 
-      // Cập nhật User Balance
+      // 4. Update User Balance atomically
       transaction.update(userRef, {
         balancePending: newPending,
         balanceAvailable: newAvailable,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      // Cập nhật Transaction record (Lưu riêng pubRevenue và cashbackAmount, kèm currency VND)
+      // 5. Update Transaction document (Key = conversionId)
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const transactionPayload = {
+        conversionId: conversionId,
+        transactionId: transactionId || (txData ? txData.transactionId : ''),
+        orderId: orderId || (txData ? txData.orderId : ''),
+        userId: userId,
+        campaignId: campaignId,
+        campaignName: campaignName,
+        productId: productId,
+        productName: productName,
+        productPrice: productPrice,
+        productQuantity: productQuantity,
+        categoryName: categoryName,
+        salesAmount: salesAmount,
+        commission: commission,
+        cashbackAmount: newCashback,
+        accessTradeStatus: accessTradeStatus,
+        isConfirmed: isConfirmed,
+        status: newStatus,
+        currency: 'VND',
+        updatedAt: now
+      };
+
       if (!txDoc.exists) {
-        transaction.set(txRef, {
-          orderId: order_id,
-          userId: userId,
-          pubRevenue: revenue,
-          cashbackAmount: revenue,
-          currency: 'VND',
-          status: newStatus,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        transactionPayload.createdAt = now;
+        transaction.set(txRef, transactionPayload);
       } else {
-        transaction.update(txRef, {
-          status: newStatus,
-          pubRevenue: revenue,
-          cashbackAmount: revenue,
-          currency: 'VND',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        transaction.update(txRef, transactionPayload);
       }
 
-      // Ghi Transaction Event
+      // 6. Write Transaction Event
       const txEventRef = db.collection('transaction_events').doc('TXE_' + crypto.randomUUID());
       transaction.set(txEventRef, {
         eventId: txEventRef.id,
-        transactionId: order_id,
-        orderId: order_id,
+        conversionId: conversionId,
+        transactionId: transactionId,
+        orderId: orderId,
         userId: userId,
-        oldStatus: oldStatus || 'none',
+        oldStatus: oldStatus,
         newStatus: newStatus,
-        amount: revenue,
-        currency: 'VND',
-        eventType: eventType,
+        oldCashback: oldCashback,
+        newCashback: newCashback,
+        deltaCashback: deltaPending !== 0 ? deltaPending : deltaAvailable,
+        eventType: ledgerType.toLowerCase(),
         source: 'accesstrade_webhook',
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        createdAt: now
       });
 
-      // Ghi Ledger
+      // 7. Write Immutable Ledger Entry
       const ledgerRef = db.collection('ledger').doc('LEDGER_' + crypto.randomUUID());
+      const ledgerAmount = Math.abs(deltaPending !== 0 ? deltaPending : deltaAvailable);
       transaction.set(ledgerRef, {
         ledgerId: ledgerRef.id,
         userId: userId,
-        transactionId: order_id,
-        type: eventType,
-        amount: revenue,
+        conversionId: conversionId,
+        transactionId: transactionId,
+        orderId: orderId,
+        type: ledgerType,
+        amount: ledgerAmount,
         currency: 'VND',
         balancePendingBefore: currentPending,
         balancePendingAfter: newPending,
         balanceAvailableBefore: currentAvailable,
         balanceAvailableAfter: newAvailable,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        createdAt: now
       });
 
-      // Đánh dấu Webhook Event đã xử lý
+      // 8. Mark Webhook Event as Processed
       transaction.set(webhookEventRef, {
         eventId: webhookEventId,
-        orderId: order_id,
-        subId: sub_id,
-        status: orderStatus,
-        pubRevenue: revenue,
+        conversionId: conversionId,
+        orderId: orderId,
+        userId: userId,
+        status: accessTradeStatus,
+        commission: commission,
         processed: true,
-        receivedAt: admin.firestore.FieldValue.serverTimestamp()
+        receivedAt: now
       });
     });
 
-    return res.status(200).json({ success: true, message: 'Webhook processed successfully' });
+    return res.status(200).json({ success: true, message: 'Webhook processed successfully with conversionId primary identity' });
   } catch (error) {
-    console.error('Webhook Error:', error.message);
-    // Ghi nhận webhook thất bại vào webhook_events để audit
+    console.error('Webhook Processing Error:', error.message);
     try {
       const failEventId = 'FAIL_' + crypto.randomUUID();
       await db.collection('webhook_events').doc(failEventId).set({
@@ -444,7 +540,7 @@ app.post('/webhook', verifyWebhookSecret, async (req, res) => {
         receivedAt: admin.firestore.FieldValue.serverTimestamp()
       });
     } catch (logErr) {
-      console.error('Failed to log webhook error:', logErr);
+      console.error('Failed to log webhook failure event:', logErr);
     }
     return res.status(400).json({ error: error.message || 'Internal Server Error' });
   }
