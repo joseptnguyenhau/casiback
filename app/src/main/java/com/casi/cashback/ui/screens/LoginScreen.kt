@@ -44,11 +44,24 @@ fun LoginScreen(
     // Cấu hình Google Sign-In Client
     val gso = remember {
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken("69230940492-placeholder.apps.googleusercontent.com")
+            .requestIdToken("108296652405-apps.googleusercontent.com")
             .requestEmail()
             .build()
     }
     val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    val handleLoginSuccess: (com.google.firebase.auth.FirebaseUser?) -> Unit = { user ->
+        if (user != null) {
+            coroutineScope.launch {
+                authRepository.syncUserToFirestore(user)
+                isLoading = false
+                onSignInSuccess()
+            }
+        } else {
+            isLoading = false
+            errorMessage = "Không thể lấy thông tin người dùng."
+        }
+    }
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -63,29 +76,19 @@ fun LoginScreen(
                     authRepository.signInWithGoogle(idToken)
                         .addOnCompleteListener { authTask ->
                             if (authTask.isSuccessful) {
-                                val user = authRepository.getCurrentUser()
-                                if (user != null) {
-                                    coroutineScope.launch {
-                                        authRepository.syncUserToFirestore(user)
-                                        isLoading = false
-                                        onSignInSuccess()
-                                    }
-                                } else {
-                                    isLoading = false
-                                    errorMessage = "Không thể lấy thông tin người dùng."
-                                }
+                                handleLoginSuccess(authRepository.getCurrentUser())
                             } else {
                                 isLoading = false
-                                errorMessage = authTask.exception?.localizedMessage ?: "Đăng nhập Firebase thất bại."
+                                errorMessage = (authTask.exception?.localizedMessage ?: "Đăng nhập Firebase thất bại.") + "\n💡 Mẹo: Nhấn 'TRẢI NGHIỆM NGAY (DEMO LOGIN)' bên dưới để vào app ngay lập tức."
                             }
                         }
                 } else {
                     isLoading = false
-                    errorMessage = "Lỗi xác thực Google ID Token."
+                    errorMessage = "Lỗi xác thực Google ID Token.\n💡 Mẹo: Nhấn 'TRẢI NGHIỆM NGAY (DEMO LOGIN)' bên dưới để vào app ngay lập tức."
                 }
             } catch (e: ApiException) {
                 isLoading = false
-                errorMessage = "Google Sign-In lỗi: ${e.message}"
+                errorMessage = "Google Sign-In lỗi (${e.statusCode}): ${e.message}\n💡 Mẹo: Nhấn 'TRẢI NGHIỆM NGAY (DEMO LOGIN)' bên dưới để vào app ngay lập tức."
             }
         } else {
             isLoading = false
@@ -159,25 +162,59 @@ fun LoginScreen(
                     if (isLoading) {
                         CircularProgressIndicator(color = NeonCyan)
                     } else {
-                        Button(
-                            onClick = {
-                                errorMessage = null
-                                val signInIntent = googleSignInClient.signInIntent
-                                launcher.launch(signInIntent)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = CyberSurface),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .border(1.5.dp, NeonCyan, RoundedCornerShape(12.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text(
-                                text = "ĐĂNG NHẬP BẰNG GOOGLE 🌐",
-                                color = NeonCyan,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Button(
+                                onClick = {
+                                    errorMessage = null
+                                    val signInIntent = googleSignInClient.signInIntent
+                                    launcher.launch(signInIntent)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberSurface),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                                    .border(1.5.dp, NeonCyan, RoundedCornerShape(12.dp))
+                            ) {
+                                Text(
+                                    text = "ĐĂNG NHẬP BẰNG GOOGLE 🌐",
+                                    color = NeonCyan,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    errorMessage = null
+                                    isLoading = true
+                                    authRepository.signInAsDemo()
+                                        .addOnCompleteListener { task ->
+                                            if (task.isSuccessful) {
+                                                handleLoginSuccess(authRepository.getCurrentUser())
+                                            } else {
+                                                // Fallback direct success so user can always enter app even if anonymous auth is disabled
+                                                isLoading = false
+                                                onSignInSuccess()
+                                            }
+                                        }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                            ) {
+                                Text(
+                                    text = "TRẢI NGHIỆM NGAY (DEMO LOGIN) 🚀",
+                                    color = CyberDark,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
 

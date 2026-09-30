@@ -22,6 +22,13 @@ class AuthRepository {
     }
 
     /**
+     * Đăng nhập ẩn danh / Demo để test app khi Google Sign-In chưa cấu hình client ID.
+     */
+    fun signInAsDemo(): Task<AuthResult> {
+        return auth.signInAnonymously()
+    }
+
+    /**
      * Đồng bộ thông tin người dùng lên collection 'users' trên Firestore nếu chưa tồn tại.
      */
     suspend fun syncUserToFirestore(firebaseUser: FirebaseUser): Result<Unit> {
