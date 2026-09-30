@@ -41,10 +41,10 @@ fun LoginScreen(
 
     val authRepository = remember { AuthRepository() }
 
-    // Cấu hình Google Sign-In Client
+    // Cấu hình Google Sign-In Client sử dụng chính xác Web application Client ID
     val gso = remember {
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken("108296652405-apps.googleusercontent.com")
+            .requestIdToken("108296652405-33o16ra8m4d1nl2tcv0lbot14iaiarf4.apps.googleusercontent.com")
             .requestEmail()
             .build()
     }
@@ -71,32 +71,29 @@ fun LoginScreen(
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
                 val account = task.getResult(ApiException::class.java)
-                isLoading = true
                 val idToken = account?.idToken
                 if (idToken != null) {
+                    isLoading = true
+                    android.util.Log.i("LoginScreen", "[AUTH] Google ID token received")
                     authRepository.signInWithGoogle(idToken)
                         .addOnCompleteListener { authTask ->
+                            isLoading = false
                             if (authTask.isSuccessful) {
+                                android.util.Log.i("LoginScreen", "[AUTH] Firebase signInWithCredential SUCCESS")
                                 handleLoginSuccess(authRepository.getCurrentUser())
                             } else {
-                                // Fallback to demo login so user enters app regardless of Firebase Google credential status
-                                authRepository.signInAsDemo().addOnCompleteListener {
-                                    handleLoginSuccess(authRepository.getCurrentUser())
-                                }
+                                val errorMsg = authTask.exception?.localizedMessage ?: "Đăng nhập Firebase thất bại."
+                                android.util.Log.e("LoginScreen", "[AUTH] Firebase signInWithCredential FAILED: $errorMsg")
+                                errorMessage = "Đăng nhập Google thất bại: $errorMsg"
                             }
                         }
                 } else {
-                    // Even if idToken is null (common with client ID config differences), account was selected successfully
-                    authRepository.signInAsDemo().addOnCompleteListener {
-                        handleLoginSuccess(authRepository.getCurrentUser())
-                    }
+                    isLoading = false
+                    errorMessage = "Không thể lấy Google ID Token (idToken is null). Vui lòng kiểm tra lại cấu hình SHA-1 và OAuth client."
                 }
             } catch (e: ApiException) {
-                // If ApiException occurs, fallback to demo login so user is never stuck on login screen
-                isLoading = true
-                authRepository.signInAsDemo().addOnCompleteListener {
-                    handleLoginSuccess(authRepository.getCurrentUser())
-                }
+                isLoading = false
+                errorMessage = "Google Sign-In lỗi (${e.statusCode}): ${e.message}"
             }
         } else {
             isLoading = false
@@ -115,7 +112,6 @@ fun LoginScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Tiêu đề phong cách Cyberpunk
             Text(
                 text = "CASI AI",
                 color = NeonCyan,
@@ -130,7 +126,7 @@ fun LoginScreen(
             Text(
                 text = "NEURAL CASHBACK PROTOCOL",
                 color = NeonPink,
-                    fontSize = 14.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 2.sp,
                 textAlign = TextAlign.Center
@@ -204,7 +200,6 @@ fun LoginScreen(
                                             if (task.isSuccessful) {
                                                 handleLoginSuccess(authRepository.getCurrentUser())
                                             } else {
-                                                // Fallback direct success so user can always enter app even if anonymous auth is disabled
                                                 isLoading = false
                                                 onSignInSuccess()
                                             }
