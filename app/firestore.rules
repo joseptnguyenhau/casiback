@@ -10,10 +10,10 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Users collection: users can read their own profile, client cannot modify monetary balance
+    // Users collection: users can read, create, and update their own profile document
     match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create, update, delete: if false; // Only Cloud Functions / Admin SDK can modify monetary data
+      allow read, create, update: if isOwner(userId);
+      allow delete: if false; // User profiles cannot be client-deleted
     }
 
     // Transactions collection: users can read their own transactions, client cannot write

@@ -1,4 +1,4 @@
-package com.casi.cashback
+package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
