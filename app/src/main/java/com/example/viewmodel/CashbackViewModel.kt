@@ -112,6 +112,56 @@ class CashbackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    val userProfileState: StateFlow<Map<String, Any>?> = repository.getUserProfileFlow()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
+    val withdrawalRequestsState: StateFlow<List<Map<String, Any>>> = repository.getWithdrawalRequestsFlow()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    fun updateProfile(data: Map<String, Any>, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            val result = repository.updateUserProfile(data)
+            result.fold(
+                onSuccess = {
+                    _uiMessage.value = "Cập nhật thông tin thành công!"
+                    onSuccess()
+                },
+                onFailure = { err ->
+                    _uiMessage.value = err.message ?: "Lỗi cập nhật thông tin."
+                }
+            )
+        }
+    }
+
+    fun submitWithdrawalRequest(
+        amount: Long,
+        bankName: String,
+        accountNumber: String,
+        accountHolder: String,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = repository.createWithdrawalRequest(amount, bankName, accountNumber, accountHolder)
+            result.fold(
+                onSuccess = { msg ->
+                    _uiMessage.value = msg
+                    onSuccess()
+                },
+                onFailure = { err ->
+                    _uiMessage.value = err.message ?: "Lỗi yêu cầu rút tiền."
+                }
+            )
+        }
+    }
+
     fun clearMessage() {
         _uiMessage.value = null
     }

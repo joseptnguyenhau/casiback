@@ -53,7 +53,11 @@ fun LoginScreen(
     val handleLoginSuccess: (com.google.firebase.auth.FirebaseUser?) -> Unit = { user ->
         if (user != null) {
             coroutineScope.launch {
-                authRepository.syncUserToFirestore(user)
+                try {
+                    authRepository.syncUserToFirestore(user)
+                } catch (e: Exception) {
+                    android.util.Log.e("LoginScreen", "[FIRESTORE] User sync error ignored for navigation: ${e.message}")
+                }
                 isLoading = false
                 android.util.Log.i("LoginScreen", "[NAVIGATION] Opening main application")
                 onSignInSuccess()
@@ -83,7 +87,7 @@ fun LoginScreen(
                                 handleLoginSuccess(authRepository.getCurrentUser())
                             } else {
                                 val errorMsg = authTask.exception?.localizedMessage ?: "Đăng nhập Firebase thất bại."
-                                android.util.Log.e("LoginScreen", "[AUTH] Firebase signInWithCredential FAILED: $errorMsg")
+                                android.util.Log.e("LoginScreen", "[AUTH] Firebase signInWithCredential FAILED: $errorMsg", authTask.exception)
                                 errorMessage = "Đăng nhập Google thất bại: $errorMsg"
                             }
                         }
@@ -197,11 +201,19 @@ fun LoginScreen(
                                     isLoading = true
                                     authRepository.signInAsDemo()
                                         .addOnCompleteListener { task ->
+                                            isLoading = false
                                             if (task.isSuccessful) {
-                                                handleLoginSuccess(authRepository.getCurrentUser())
+                                                val user = authRepository.getCurrentUser()
+                                                if (user != null) {
+                                                    android.util.Log.i("LoginScreen", "[DEMO] Anonymous sign-in success, handling user sync and navigation")
+                                                    handleLoginSuccess(user)
+                                                } else {
+                                                    errorMessage = "Không tìm thấy user ẩn danh sau khi đăng nhập."
+                                                }
                                             } else {
-                                                isLoading = false
-                                                onSignInSuccess()
+                                                val error = task.exception
+                                                android.util.Log.e("LoginScreen", "[DEMO] Anonymous sign-in failed: ${error?.message}", error)
+                                                errorMessage = "Đăng nhập Demo thất bại: ${error?.localizedMessage ?: "Vui lòng bật Anonymous Authentication trong Firebase Console."}"
                                             }
                                         }
                                 },

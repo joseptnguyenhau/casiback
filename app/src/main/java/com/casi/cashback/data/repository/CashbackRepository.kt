@@ -210,4 +210,105 @@ class CashbackRepository(private val appDao: AppDao) {
             return@withContext Result.failure(e)
         }
     }
+
+    fun getUserProfileFlow(): Flow<Map<String, Any>?> = callbackFlow {
+        val uid = try { currentUserId } catch (e: Exception) { null }
+        if (uid == null) {
+            trySend(null)
+            awaitClose {}
+            return@callbackFlow
+        }
+        val docRef = firestore.collection("users").document(uid)
+        val listener = docRef.addSnapshotListener { snapshot, error ->
+            if (error != null) return@addSnapshotListener
+            if (snapshot != null && snapshot.exists()) {
+                trySend(snapshot.data)
+            } else {
+                trySend(null)
+            }
+        }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun updateUserProfile(data: Map<String, Any>): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val uid = currentUserId
+            val userRef = firestore.collection("users").document(uid)
+            val updateMap = data.toMutableMap()
+            updateMap["updatedAt"] = com.google.firebase.Timestamp.now()
+            userRef.set(updateMap, com.google.firebase.firestore.SetOptions.merge()).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun getWithdrawalRequestsFlow(): Flow<List<Map<String, Any>>> = callbackFlow {
+        val uid = try { currentUserId } catch (e: Exception) { null }
+        if (uid == null) {
+            trySend(emptyList())
+            awaitClose {}
+            return@callbackFlow
+        }
+        val query = firestore.collection("users").document(uid)
+            .collection("withdrawalRequests")
+            .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+
+        val listener = query.addSnapshotListener { snapshot, error ->
+            if (error != null) return@addSnapshotListener
+            if (snapshot != null) {
+                val requests = snapshot.documents.mapNotNull { doc ->
+                    val map = doc.data?.toMutableMap() ?: mutableMapOf()
+                    map["requestId"] = doc.id
+                    map
+                }
+                trySend(requests)
+            } else {
+                trySend(emptyList())
+            }
+        }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun createWithdrawalRequest(
+        amount: Long,
+        bankName: String,
+        accountNumber: String,
+        accountHolder: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val uid = currentUserId
+            val requestId = firestore.collection("users").document(uid).collection("withdrawalRequests").document().id
+            val requestRef = firestore.collection("users").document(uid).collection("withdrawalRequests").document(requestId)
+
+            val paymentSnapshot = mapOf(
+                "bankName" to bankName,
+                "accountNumber" to accountNumber,
+                "accountHolder" to accountHolder
+            )
+
+            val requestData = mapOf(
+                "requestId" to requestId,
+                "userId" to uid,
+                "amount" to amount,
+                "paymentMethod" to "Bank Transfer",
+                "paymentAccountSnapshot" to paymentSnapshot,
+                "status" to "PENDING",
+                "createdAt" to com.google.firebase.Timestamp.now(),
+                "updatedAt" to com.google.firebase.Timestamp.now()
+            )
+
+            requestRef.set(requestData).await()
+
+            try {
+                requestWithdrawal(bankName, accountNumber, accountHolder, amount)
+            } catch (e: Exception) {
+                // Ignore backend call error if offline
+            }
+
+            Result.success("Yêu cầu rút tiền đã được gửi thành công (Trạng thái: PENDING)")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

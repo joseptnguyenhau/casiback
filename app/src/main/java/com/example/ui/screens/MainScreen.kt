@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,13 +20,14 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
     object Home : Screen("home", "Trang Chủ", Icons.Default.Home)
     object History : Screen("history", "Lịch Sử", Icons.Default.ReceiptLong)
     object Wallet : Screen("wallet", "Ví Tiền", Icons.Default.AccountBalanceWallet)
+    object Account : Screen("account", "Tài Khoản", Icons.Default.Person)
 }
 
 @Composable
 fun MainScreen(viewModel: CashbackViewModel) {
     var currentTab by remember { mutableStateOf<Screen>(Screen.Home) }
 
-    val items = listOf(Screen.Home, Screen.History, Screen.Wallet)
+    val items = listOf(Screen.Home, Screen.History, Screen.Wallet, Screen.Account)
 
     Scaffold(
         bottomBar = {
@@ -59,6 +61,7 @@ fun MainScreen(viewModel: CashbackViewModel) {
                 Screen.Home -> HomeScreen(viewModel = viewModel, onNavigateToWallet = { currentTab = Screen.Wallet })
                 Screen.History -> HistoryScreen(viewModel = viewModel)
                 Screen.Wallet -> WalletScreen(viewModel = viewModel)
+                Screen.Account -> AccountScreen(viewModel = viewModel)
             }
         }
     }

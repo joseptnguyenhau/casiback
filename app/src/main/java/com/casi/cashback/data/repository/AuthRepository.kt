@@ -12,9 +12,17 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 
 class AuthRepository {
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val firestore = FirebaseConfig.firestore
+    private val auth: FirebaseAuth by lazy {
+        FirebaseAuth.getInstance()
+    }
+    private val firestore by lazy {
+        FirebaseConfig.firestore
+    }
     private val TAG = "AuthRepository"
+
+    fun getCurrentUser(): FirebaseUser? {
+        return auth.currentUser
+    }
 
     fun signInWithGoogle(idToken: String): Task<AuthResult> {
         Log.i(TAG, "[AUTH] Firebase signInWithCredential started")
@@ -31,14 +39,20 @@ class AuthRepository {
     }
 
     fun signInAsDemo(): Task<AuthResult> {
-        Log.i(TAG, "[AUTH] Firebase signInAnonymously (Demo) started")
+        Log.i(TAG, "[DEMO] Starting anonymous login")
         return auth.signInAnonymously().addOnCompleteListener { task ->
             if (task.isSuccessful) {
-                val uid = auth.currentUser?.uid ?: ""
-                Log.i(TAG, "[AUTH] Firebase signInAnonymously SUCCESS")
-                Log.i(TAG, "[AUTH] Firebase UID = $uid")
+                val user = task.result?.user
+                Log.i(TAG, "[DEMO] Anonymous login SUCCESS")
+                Log.i(TAG, "[DEMO] UID: ${user?.uid}")
+                Log.i(TAG, "[DEMO] isAnonymous: ${user?.isAnonymous}")
+                Log.i(TAG, "[DEMO] providerData: ${user?.providerData}")
             } else {
-                Log.e(TAG, "[AUTH] Firebase signInAnonymously FAILED", task.exception)
+                val error = task.exception
+                Log.e(TAG, "[DEMO] Anonymous login FAILED")
+                Log.e(TAG, "[DEMO] code: ${error?.javaClass?.simpleName}")
+                Log.e(TAG, "[DEMO] message: ${error?.message}")
+                Log.e(TAG, "[DEMO] full error: $error")
             }
         }
     }
@@ -49,38 +63,23 @@ class AuthRepository {
             Log.i(TAG, "[FIRESTORE] User sync started for UID = $uid")
             val userRef = firestore.collection("users").document(uid)
 
+            val providerName = if (firebaseUser.isAnonymous) "anonymous" else "google"
             val userData = hashMapOf<String, Any>(
-                "userId" to uid,
                 "uid" to uid,
-                "name" to (firebaseUser.displayName ?: "Casi Cyber User"),
+                "email" to (firebaseUser.email ?: "anonymous@casi.ai"),
                 "displayName" to (firebaseUser.displayName ?: "Casi Cyber User"),
-                "email" to (firebaseUser.email ?: ""),
-                "photoURL" to (firebaseUser.photoUrl?.toString() ?: ""),
-                "avatarUrl" to (firebaseUser.photoUrl?.toString() ?: ""),
-                "provider" to "google",
-                "updatedAt" to Timestamp.now(),
-                "lastLoginAt" to Timestamp.now()
+                "photoUrl" to (firebaseUser.photoUrl?.toString() ?: ""),
+                "provider" to providerName,
+                "lastLogin" to Timestamp.now(),
+                "updatedAt" to Timestamp.now()
             )
 
-            val snapshot = userRef.get().await()
-            if (!snapshot.exists()) {
-                userData["createdAt"] = Timestamp.now()
-                userData["balance_available"] = 0.0
-                userData["balance_pending"] = 0.0
-            }
-
             userRef.set(userData, SetOptions.merge()).await()
-            Log.i(TAG, "[FIRESTORE] User sync SUCCESS")
+            Log.i(TAG, "[FIRESTORE] User sync SUCCESS for UID = $uid")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "[FIRESTORE] User sync FAILED", e)
             Result.failure(e)
         }
-    }
-
-    fun getCurrentUser(): FirebaseUser? = auth.currentUser
-
-    fun signOut() {
-        auth.signOut()
     }
 }

@@ -16,14 +16,43 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
-            com.google.firebase.FirebaseApp.initializeApp(this)
+            if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
+                com.google.firebase.FirebaseApp.initializeApp(this)
+                android.util.Log.i("MainActivity", "[FIREBASE] FirebaseApp initialized successfully")
+            } else {
+                android.util.Log.i("MainActivity", "[FIREBASE] FirebaseApp already initialized")
+            }
         } catch (e: Exception) {
-            // Ignored if already initialized
+            android.util.Log.e("MainActivity", "[FIREBASE] FirebaseApp initialization failed", e)
         }
         enableEdgeToEdge()
         setContent {
             ShopeeCashbackTheme {
-                var currentUser by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser) }
+                var currentUser by remember {
+                    mutableStateOf(
+                        try {
+                            if (com.google.firebase.FirebaseApp.getApps(this@MainActivity).isNotEmpty()) {
+                                FirebaseAuth.getInstance().currentUser
+                            } else {
+                                null
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "[FIREBASE] Failed to get current user", e)
+                            null
+                        }
+                    )
+                }
+
+                DisposableEffect(Unit) {
+                    val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+                        currentUser = firebaseAuth.currentUser
+                    }
+                    val auth = FirebaseAuth.getInstance()
+                    auth.addAuthStateListener(authListener)
+                    onDispose {
+                        auth.removeAuthStateListener(authListener)
+                    }
+                }
 
                 if (currentUser == null) {
                     LoginScreen(
