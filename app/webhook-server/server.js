@@ -32,6 +32,45 @@ app.get("/health", (req, res) => {
   });
 });
 
+app.get("/api/firestore-health", async (req, res) => {
+  try {
+    const testDocRef = db.collection("backend_health_tests").doc("health_check_" + Date.now());
+    const testData = {
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      status: "testing_write_read",
+      nodeEnv: process.env.NODE_ENV || "development"
+    };
+
+    // 1. WRITE test
+    await testDocRef.set(testData);
+
+    // 2. READ test
+    const docSnap = await testDocRef.get();
+    if (!docSnap.exists) {
+      throw new Error("Failed to read back test document from Firestore.");
+    }
+
+    const readData = docSnap.data();
+
+    res.status(200).json({
+      success: true,
+      message: "Firestore WRITE and READ verified successfully.",
+      collection: "backend_health_tests",
+      documentId: testDocRef.id,
+      readData: {
+        status: readData.status,
+        hasTimestamp: !!readData.timestamp
+      }
+    });
+  } catch (err) {
+    console.error("Firestore health check failed:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 app.use(express.json());
 
 // Middleware: Verify Firebase Auth ID Token
