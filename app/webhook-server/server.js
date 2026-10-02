@@ -24,6 +24,13 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 
 const db = admin.firestore();
 const app = express();
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "casi-staging-backend",
+    firebaseProject: "casiback-5b7e2"
+  });
+});
 
 app.use(express.json());
 
