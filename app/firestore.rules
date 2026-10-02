@@ -10,10 +10,27 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Users collection: users can read, create, and update their own profile document
+    // Users collection: users can read, create, and update their own profile document (balance tampering strictly blocked)
     match /users/{userId} {
-      allow read, create, update: if isOwner(userId);
-      allow delete: if false; // User profiles cannot be client-deleted
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) 
+        && (!request.resource.data.keys().hasAny(['balanceAvailable', 'balancePending']) 
+            || (request.resource.data.balanceAvailable == 0 && request.resource.data.balancePending == 0));
+      allow update: if isOwner(userId) 
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['balanceAvailable', 'balancePending']));
+      allow delete: if false;
+    }
+
+    // Withdrawals collection: users can read their own withdrawals, ZERO client write permission (server-authoritative)
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // Legacy withdrawalRequests subcollection: read-only for owner, zero client writes
+    match /users/{userId}/withdrawalRequests/{requestId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
     }
 
     // Transactions collection: users can read their own transactions, client cannot write
@@ -24,12 +41,6 @@ service cloud.firestore {
 
     // Tracking collection: client cannot write directly
     match /tracking/{trackingId} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create, update, delete: if false; // Only Cloud Function / Admin SDK can write
-    }
-
-    // Withdrawals collection: users can read their own withdrawals, client cannot write directly
-    match /withdrawals/{withdrawalId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create, update, delete: if false; // Only Cloud Function / Admin SDK can write
     }

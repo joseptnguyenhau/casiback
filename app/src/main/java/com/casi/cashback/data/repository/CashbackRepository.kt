@@ -250,9 +250,8 @@ class CashbackRepository(private val appDao: AppDao) {
             awaitClose {}
             return@callbackFlow
         }
-        val query = firestore.collection("users").document(uid)
-            .collection("withdrawalRequests")
-            .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+        val query = firestore.collection("withdrawals")
+            .whereEqualTo("userId", uid)
 
         val listener = query.addSnapshotListener { snapshot, error ->
             if (error != null) return@addSnapshotListener
@@ -261,6 +260,9 @@ class CashbackRepository(private val appDao: AppDao) {
                     val map = doc.data?.toMutableMap() ?: mutableMapOf()
                     map["requestId"] = doc.id
                     map
+                }.sortedByDescending { doc ->
+                    val ts = doc["createdAt"] as? com.google.firebase.Timestamp
+                    ts?.toDate()?.time ?: 0L
                 }
                 trySend(requests)
             } else {
@@ -277,36 +279,7 @@ class CashbackRepository(private val appDao: AppDao) {
         accountHolder: String
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val uid = currentUserId
-            val requestId = firestore.collection("users").document(uid).collection("withdrawalRequests").document().id
-            val requestRef = firestore.collection("users").document(uid).collection("withdrawalRequests").document(requestId)
-
-            val paymentSnapshot = mapOf(
-                "bankName" to bankName,
-                "accountNumber" to accountNumber,
-                "accountHolder" to accountHolder
-            )
-
-            val requestData = mapOf(
-                "requestId" to requestId,
-                "userId" to uid,
-                "amount" to amount,
-                "paymentMethod" to "Bank Transfer",
-                "paymentAccountSnapshot" to paymentSnapshot,
-                "status" to "PENDING",
-                "createdAt" to com.google.firebase.Timestamp.now(),
-                "updatedAt" to com.google.firebase.Timestamp.now()
-            )
-
-            requestRef.set(requestData).await()
-
-            try {
-                requestWithdrawal(bankName, accountNumber, accountHolder, amount)
-            } catch (e: Exception) {
-                // Ignore backend call error if offline
-            }
-
-            Result.success("Yêu cầu rút tiền đã được gửi thành công (Trạng thái: PENDING)")
+            return@withContext requestWithdrawal(bankName, accountNumber, accountHolder, amount)
         } catch (e: Exception) {
             Result.failure(e)
         }
